@@ -1,19 +1,19 @@
 %% Machine Learning applied to Multi-Classification problem %%%%%%%%%%%%%%%
 
-%% == Part 0: Load Data ================================================ %%
-clear all, close all, clc;
+%% == Part 0.1: Load Data ============================================== %%
+clear all, close all, clc; 
 addpath(genpath('functions'))
 addpath(genpath('data'))
-%Data to load: 'data_temp.mat', 'data_noise.mat', 'data_light.mat', 
-% 'data_dioxide.mat'
-load('data_temp.mat')
+% Data to load: 'datatemp', 'datadioxide', 'datalight', 'datanoise'
+load('data', 'datatemp')
+data = datatemp;
 
 %% == Part 0.2: Configuration ========================================== %%
 % Option: 
 %  Logistic Regression: 'lr'
 %  Neural Network: 'nn'
 %  Support Vector Machine: 'svm'  
-option = 'lr';
+option = 'nn';
 
 % Number of Classes
 num_labels = 6;
@@ -30,37 +30,65 @@ elseif(strcmp(option,'svm'))
     G=0; % Regularization Parameter Default: 0 
 end
 
-% Polynomial Degree Default: 1
-d = 1;
-
 % Low-Pass Filter Smoothing Factor
 alpha = 0.15;
 
 % Number of Group training: 1, 5, 10, 15, 20,...
 u = 1;
 
+% K-Fold
+k = 5;
+
 %% == Part 1: Group Data =============================================== %%
-% Input X1
-Xtrain = lowfilter(xtrain, alpha);
-Xtest = lowfilter(xtest, alpha);
-Xtrain = avgdata(Xtrain, u, 4);
-Xtest = avgdata(Xtest, u, 4);
+data(:,1) = lowfilter(data(:,1), alpha);
+data(:,1) = avgdata(data(:,1), u, 4);
+data(:,2) = avgdata(data(:,2), u, 0);
 
-% Output y
-ytrain = avgdata(ytrain, u, 0);
-ytest = avgdata(ytest, u, 0);
-ytrain(find(ytrain>=5))=5;
-ytest(find(ytest>=5))=5;
-ytrain(find(ytrain==0))=6;
-ytest(find(ytest==0))=6;
-
-% Number of examples
-m = length(ytrain);
-mtest = length(ytest);
+% Output to multi-class problem
+dtemp = data(:,2);
+dtemp(find(dtemp>=5)) = 5;
+dtemp(find(dtemp==0)) = 6;
+data(:,2) = dtemp;
+clearvars dtemp;
 
 %% == Part 2: Plotting Data ============================================ %%
-plotDataOneVsAll(Xtrain,ytrain);
-plotDataOneVsAll(Xtest, ytest);
+plotDataOneVsAll(data(:,1), data(:,2));
+pause();
+
+%% == Part 3: Train Classifier ========================================= %%
+% SEED
+rng(1)
+[Xtrain, ytrain, Xtest, ytest] = dataSplit(data, 0.7);
+
+if (~strcmp(option, 'nn'))
+    Xtrain = [ones(size(Xtrain, 1), 1) Xtrain];
+    Xtest = [ones(size(Xtest, 1), 1) Xtest];
+end
+
+tic
+switch option
+    case 'lr'
+        theta = trainOneVsAll(Xtrain, ytrain, lambda, num_labels);
+    case 'nn' 
+        [Theta1, Theta2, cost] = trainNN(Xtrain, ytrain, lambda, ...
+            hidden_layer_size, num_labels);
+    case 'svm'
+        svmoptions = ['-s 0 -t 2 -c ', num2str(C), ' -g ', num2str(G)];
+        model = svmtrain(ytrain, Xtrain, svmoptions);
+end
+toc
+pause();
+
+%% == Part 4: Predict ================================================== %%
+switch option
+    case 'lr'
+        p = predictOneVsAll(theta, Xtest);
+    case 'nn'
+        p = predictNN(Theta1, Theta2, Xtest);
+    case 'svm'
+        p = svmpredict(ytest, Xtest, model);
+        %theta = [model.rho model.SVs(:,2)'*model.sv_coef]';
+end
 
 yy1 = size(find(ytrain==1),1);
 yy2 = size(find(ytrain==2),1);
@@ -74,54 +102,15 @@ yy3t = size(find(ytest==3),1);
 yy4t = size(find(ytest==4),1);
 yy5t = size(find(ytest==5),1);
 yy6t = size(find(ytest==6),1);
-pause();
 
-%% == Part 3: Polynomial Features and Feature Scaling ================== %%
-Xn = polyFeatures(Xtrain, d);
-Xtestn = polyFeatures(Xtest, d);
-
-Xn = featureNormalize(Xn); 
-Xtestn = featureNormalize(Xtestn); 
-
-if (~strcmp(option, 'nn'))
-    Xn = [ones(size(Xn, 1), 1) Xn];
-    Xtestn = [ones(size(Xtestn, 1), 1) Xtestn];
-end
-
-%% == Part 3: Train Classifier ========================================= %%
-tic;
-switch option
-    case 'lr'
-        [theta] = trainOneVsAll(Xn, ytrain, num_labels, lambda);
-    case 'nn' 
-        [Theta1, Theta2, cost] = trainNN(Xn, ytrain, lambda, ...
-            hidden_layer_size, num_labels);
-    case 'svm'
-        svmoptions = ['-s 0 -t 2 -c ', num2str(C), ' -g ', num2str(G)];
-        model = svmtrain(ytrain, Xn, svmoptions);
-end
-toc;
-pause();
-
-%% == Part 4: Predict ================================================== %%
-% Compute the training set accuracy
-switch option
-    case 'lr'
-        p = predictOneVsAll(theta, Xtestn);
-    case 'nn'
-        p = predictNN(Theta1, Theta2, Xtestn);
-    case 'svm'
-        p = svmpredict(ytest, Xtestn, model);
-end
-
-fprintf('Samples in training set: %d\n', m);
+fprintf('Samples in training set: %d\n', length(Xtrain(:,1)));
 fprintf('Number of Y=1: %d\n', yy1);
 fprintf('Number of Y=2: %d\n', yy2);
 fprintf('Number of Y=3: %d\n', yy3);
 fprintf('Number of Y=4: %d\n', yy4);
 fprintf('Number of Y=5: %d\n', yy5);
 fprintf('Number of Y=6: %d\n', yy6);
-fprintf('Samples in test set: %d\n', mtest);
+fprintf('Samples in test set: %d\n', length(Xtest(:,1)));
 fprintf('Number of Y=1: %d\n', yy1t);
 fprintf('Number of Y=2: %d\n', yy2t);
 fprintf('Number of Y=3: %d\n', yy3t);
@@ -140,34 +129,66 @@ fprintf('Train MCC Score (macro): %f\n', MCC(ytest, p, num_labels, ...
     'macro')*100);
 pause();
 
-%% == Part 4: Feature Mapping with Learning Curve   ==================== %%
+%% == Part 5: Tweaked   =============================================== %%
 %  Test various values of lambda and polynomial degrees on validation set
-
+tic;
 switch option
     case 'lr'
-        lvec = [0 0.001 0.003 0.01 0.03 0.1 0.3 1 3 10 30 100]';
-        dvec = 1:10';
-        tvec = 0.5;
-        [lambda, pd, threshold, score, score_vec] = ...
-            performOneVsAll(Xtrain, ytrain, Xtest, ytest, lvec, dvec, ...
-            tvec);
+        lvec = [0 0.01 0.1 1 10 100]';
+        dvec = 1:3';
+        [lambda, pd, score, score_vec] = ...
+            performOneVsAll(Xtrain(:,2:end), ytrain, lvec, dvec, k);
         fprintf('lambda     degree      threshold       score\n');
         disp([lambda pd' threshold'  score']);
     case 'nn'
-        lvec = [0 0.01 0.1 1 10]';
-        dvec = 1:5';
-        hvec = [1 2 3 5]';
+        lvec = [0 0.1 1 10]';
+        dvec = 1:3';
+        hvec = [1 2 3]';
         [lambda, pd, hd, score, score_vec] = ...
-            performNN(Xtrain, ytrain, Xtestn, ytest, lvec, dvec, ...
-            hvec);
+            performNN(Xtrain, ytrain, lvec, dvec, hvec, k);
         fprintf('lambda     degree      hidden       score\n');
         disp([lambda pd' hd'  score']);
     case 'svm'
-        gvec = [0 0.001 0.003 0.01 0.03 0.1 0.3 1 3 10 30 100]';
+        gvec = [0 0.01 0.1 1 10]';
         dvec = 1;
-        cvec = [0.1 0.3 1 3 10]';
+        cvec = [0.1 1 10]';
         [gamma, pd, c, score, score_vec] = ...
-            performSVM(Xtrain, ytrain, Xtest, ytest, gvec, dvec, cvec);
+            performSVM(Xtrain(:,2:end), ytrain, gvec, dvec, cvec, k);
         fprintf('gamma     degree      c       score\n');
         disp([gamma pd' c'  score']);
 end
+toc;
+pause();
+
+%% == Part 6: Tweaked Train Classifier  ================================ %%
+if (~strcmp(option, 'nn'))
+    Xtrain = polyFeatures(Xtrain(:,2:end), pd);
+    Xtrain = featureNormalize(Xtrain);
+    Xtest = polyFeatures(Xtest(:,2:end), pd);
+    Xtest = featureNormalize(Xtest); 
+else
+    Xtrain = polyFeatures(Xtrain, pd);
+    Xtrain = featureNormalize(Xtrain);
+    Xtest = polyFeatures(Xtest, pd);
+    Xtest = featureNormalize(Xtest); 
+end
+
+switch option
+    case 'lr'
+        Xtrain = [ones(size(Xtrain, 1), 1) Xtrain];
+        Xtest = [ones(size(Xtest, 1), 1) Xtest];
+        theta = trainOneVsAll(Xtrain, ytrain, lambda, num_labels);
+        p = predictOneVsAll(theta, Xtest);        
+    case 'nn' 
+        [Theta1, Theta2, cost] = trainNN(Xtrain, ytrain, lambda, ...
+            hd, num_labels);
+        p = predictNN(Theta1, Theta2, Xtest);
+    case 'svm' 
+        Xtrain = [ones(size(Xtrain, 1), 1) Xtrain];
+        Xtest = [ones(size(Xtest, 1), 1) Xtest];
+        svmoptions = ['-s 0 -t 2 -c ', num2str(c), ' -g ', num2str(gamma)];
+        model = svmtrain(ytrain, Xtrain, svmoptions);
+        p = svmpredict(ytest, Xtest, model);
+end
+fprintf('Train F1 Score (macro): %f\n', f1score(ytest, p, num_labels, ...
+    'macro')*100);
